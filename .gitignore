@@ -1,0 +1,27 @@
+# ---------- 工具链（体积大，自行下载，不进 git） ----------
+ispc-*/
+*.tar.gz
+
+# ---------- 编译中间产物 ----------
+objs/
+*.o
+
+# ---------- 编译出的可执行文件 ----------
+lab1/prog1_mandelbrot_threads/mandelbrot
+lab1/prog2_vecintrin/myexp
+lab1/prog3_mandelbrot_ispc/mandelbrot_ispc
+lab1/prog4_sqrt/sqrt
+lab1/prog5_saxpy/saxpy
+lab1/prog6_kmeans/kmeans
+
+# ---------- 程序运行生成的文件 ----------
+*.ppm
+data.dat
+start.log
+end.log
+start.png
+end.png
+
+# ---------- 系统/编辑器杂项 ----------
+.DS_Store
+*~

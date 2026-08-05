@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <cstring>
 #include <algorithm>
 #include <getopt.h>
 
@@ -71,7 +72,7 @@ int main(int argc, char** argv) {
     const unsigned int width = 1600;
     const unsigned int height = 1200;
     const int maxIterations = 256;
-    int numThreads = 2;
+    int numThreads = 8;
 
     float x0 = -2;
     float x1 = 1;
@@ -126,7 +127,7 @@ int main(int argc, char** argv) {
     // Run the serial implementation.  Run the code three times and
     // take the minimum to get a good estimate.
     //
-
+    // zhe li shi pao le 5 ci zhao dao cishi  zui duan de shi jian 
     double minSerial = 1e30;
     for (int i = 0; i < 5; ++i) {
        memset(output_serial, 0, width * height * sizeof(int));

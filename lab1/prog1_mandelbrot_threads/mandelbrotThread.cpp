@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <cstdlib>
 #include <thread>
 
 #include "CycleTimer.h"
@@ -34,8 +35,15 @@ void workerThreadStart(WorkerArgs * const args) {
     // to compute a part of the output image.  For example, in a
     // program that uses two threads, thread 0 could compute the top
     // half of the image and thread 1 could compute the bottom half.
-
     printf("Hello world from thread %d\n", args->threadId);
+    double startTime = CycleTimer::currentSeconds();
+    int rowPerThread = args->height / args->numThreads;
+    int startRow = args->threadId * rowPerThread;
+    mandelbrotSerial(args->x0, args->y0, args->x1,args->y1,args->width, 
+        args->height, startRow, rowPerThread, args->maxIterations, args->output);
+    double endTime = CycleTimer::currentSeconds();
+    printf("Thread %d finished in %.3f ms\n", args->threadId, (endTime - startTime) * 1000);
+
 }
 
 //
