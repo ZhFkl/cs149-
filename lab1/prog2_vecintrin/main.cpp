@@ -249,6 +249,33 @@ void clampedExpVector(float* values, int* exponents, float* output, int N) {
   // Your solution should work for any value of
   // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
   //
+  __cs149_vec_float x;
+  __cs149_vec_float result;
+  __cs149_vec_int y;
+  __cs149_vec_int zero = _cs149_vset_int(0);
+  __cs149_vec_int one = _cs149_vset_int(1);
+  __cs149_vec_float clampVal = _cs149_vset_float(9.999999f);
+  for(int i = 0; i < N; i += VECTOR_WIDTH){
+    int valid = (N - i) < VECTOR_WIDTH ? (N - i) : VECTOR_WIDTH;
+    __cs149_mask  maskValid = _cs149_init_ones(valid);
+
+    _cs149_vload_float(x, values + i, maskValid);
+    _cs149_vload_int(y, exponents + i, maskValid);
+    result = _cs149_vset_float(1.f);
+
+    __cs149_mask maskActive = _cs149_init_ones(0);
+    _cs149_vgt_int(maskActive, y, zero, maskValid);
+    while(_cs149_cntbits(maskActive) > 0){
+      _cs149_vmult_float(result,result, x, maskActive);
+      _cs149_vsub_int(y, y, one, maskActive);
+      _cs149_vgt_int(maskActive, y, zero, maskValid);
+    }
+    __cs149_mask maskClamp = _cs149_init_ones(0);
+    _cs149_vlt_float(maskClamp, clampVal, result, maskValid);
+    _cs149_vset_float(result, 9.999999f, maskClamp);
+
+    _cs149_vstore_float(output + i, result, maskValid);
+  }
   
 }
 
@@ -270,11 +297,22 @@ float arraySumVector(float* values, int N) {
   //
   // CS149 STUDENTS TODO: Implement your vectorized version of arraySumSerial here
   //
-  
+  __cs149_vec_float result = _cs149_vset_float(0.f);
   for (int i=0; i<N; i+=VECTOR_WIDTH) {
+    // tong guo mask lai pan duan jia zai duo shao shuju
+    // ba ci shi de shu ju jia zai jin lai 
 
+    // result = result + values[i:i+VECTOR_WIDTH]
+    int valid = (N - i) < VECTOR_WIDTH ? (N - i) : VECTOR_WIDTH;
+    __cs149_mask maskValid = _cs149_init_ones(valid);
+    __cs149_vec_float x;
+    _cs149_vload_float(x, values + i, maskValid);
+    _cs149_vadd_float(result, result, x, maskValid);
   }
-
-  return 0.0;
+  for(int step = VECTOR_WIDTH; step > 1; step /= 2){
+    _cs149_hadd_float(result, result);
+    _cs149_interleave_float(result, result);
+  }
+  return result.value[0];
 }
 
