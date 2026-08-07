@@ -1,62 +1,133 @@
-# CS149 并行计算 · 实验记录
+# CS149 并行计算 · 学习笔记
 
-Stanford CS149（Parallel Computing）课程 Lab 的学习与实验记录，包含实现思路、性能测试脚本和实测数据。
+> Stanford CS149（Parallel Computing）课程实验笔记与数据记录。
+> 实验环境：x86_64 虚拟机（**2 核可用**）、g++ 11、ISPC v1.28.1（AVX2 8 路）。
+> 课程参考机为 4 核 8 超线程，文中加速比数据受 2 核硬件上限约束，分析时会注明。
 
-## 实验环境
+---
 
-- CPU：x86_64 虚拟机，**2 核可用**（注意：课程参考机器为 4 核 8 超线程，本文档中的加速比数据受 2 核硬件上限约束）
-- 编译器：g++ 11；ISPC v1.28.1（`--target=avx2-i32x8`，8 路 SIMD）
-- 构建：各程序目录下 `make` 即可
+## Lab 1：并行计算的四个经典症结
 
-## Lab 1：从多线程到 SIMD
+**一句话总纲：测量定位 → 判定瓶颈层 → 对症下药 → 验证迭代。**
 
-| 程序 | 主题 | 状态 | 实测结果 |
-|------|------|------|----------|
-| prog1_mandelbrot_threads | 线程级并行、负载均衡 | ✅ 完成 | [results_block.md](lab1/prog1_mandelbrot_threads/results_block.md) / [results_interleaved.md](lab1/prog1_mandelbrot_threads/results_interleaved.md) |
-| prog2_vecintrin | SIMD intrinsics、掩码执行 | ✅ 完成 | [results_prog2.md](lab1/prog2_vecintrin/results_prog2.md) |
-| prog3_mandelbrot_ispc | ISPC、foreach 与 task | ✅ 完成 | [results_prog3.md](lab1/prog3_mandelbrot_ispc/results_prog3.md) |
-| prog4_sqrt | 牛顿迭代、算术强度 | ✅ 完成 | 见下方小结 |
-| prog5_saxpy | 内存带宽瓶颈 | ⬜ 待完成 | — |
-| prog6_kmeans | 性能热点定位 | ⬜ 待完成 | — |
+| 程序 | 主题 | 核心知识点 | 结果数据 |
+|------|------|-----------|----------|
+| prog1 | 多线程 Mandelbrot | 负载均衡、静态交错映射 | [block](lab1/prog1_mandelbrot_threads/results_block.md) / [interleaved](lab1/prog1_mandelbrot_threads/results_interleaved.md) |
+| prog2 | SIMD intrinsics | 掩码执行、向量利用率 | [results](lab1/prog2_vecintrin/results_prog2.md) |
+| prog3 | ISPC | gang/foreach + task 两层并行 | [results](lab1/prog3_mandelbrot_ispc/results_prog3.md) |
+| prog4 | 牛顿法 sqrt | 算术强度决定并行收益 | 见下文 |
+| prog5 | saxpy | 内存带宽墙、Roofline | 见下文 |
+| prog6 | K-Means 优化 | 性能分析完整流程 | 见下文 |
 
-### prog1：线程间的工作分配
+### prog1：负载均衡决定加速比上限
 
-- 连续块分解：加速比卡死在 ~1.8x（2~8 线程全程不变）——拿到昂贵中间行的线程是瓶颈。
-- **行交错映射**（线程 i 负责第 i, i+T, i+2T… 行）：静态分配、零同步、对任意线程数通用，各线程耗时趋于一致。
-- 附带修复：整除分块在 7 线程时会漏算最后 3 行，交错循环天然覆盖所有行。
+- 连续块分解下，Mandelbrot 各行计算量差异巨大，拿到贵区域的线程拖死整体：**2~8 线程加速比全部卡在 ~1.8x**。
+- 解法（行交错映射）：线程 i 负责第 i, i+T, i+2T… 行。相邻行成本相近 → 交错后每个线程均匀混合贵贱行；纯静态、零同步、对任意线程数通用。
+- 关键动作：给每个线程加计时打印，直接看到负载不均（报告第 3 问的证据）。
+- 附坑：`height/numThreads` 整除截断会漏算末尾行（7 线程漏 3 行）。
 
-### prog2：软件模拟的向量机
+### prog2：SIMD = 单指令多数据 + 掩码
 
-- 用掩码把"每元素分支"翻译成"分支两边都算、掩码选结果"（predication）。
-- `clampedExpVector`：公式改写为 `1·x^y` 消掉 `y==0` 特判；共享 while 循环 + 每轮收缩掩码。
-- `arraySumVector`：主循环向量累加，`hadd + interleave` 做 log2(W) 轮横向归约。
-- 实测：VECTOR_WIDTH 2→16，利用率 87.6%→78.3%（分歧 lane 空转），指令数 ~减半但不严格（收益递减 = 利用率损失）。
+- 向量里没有"每条 lane 各自的 if"：**分支两边都算，掩码选结果**（predication）。比较指令生成掩码（`_cs149_vgt_*`），`_cs149_mask_not` 取反就是 else。
+- 每元素次数不同的 while 循环 → 改成**共享循环**：条件 = 还有活跃 lane（`_cs149_cntbits(mask) > 0`），每轮更新计数器、收缩掩码，提前完成的 lane 被掩码冻结、陪跑空转。
+- 公式改写消分支：`result=1` 起乘 y 次，`y==0` 的特判在代数上消失。
+- 尾处理：`_cs149_init_ones(k)` 生成前 k 条 lane 有效的掩码。
+- 实测：VECTOR_WIDTH 2→16，**利用率 87.6%→78.3%**（组越宽越容易混入大指数，空转 lane 越多）；指令数 ~减半但不严格（收益递减 = 利用率损失）。
+- 横向归约：`hadd` + `interleave` 每轮减半不同部分和，log2(W) 轮后 lane 0 即总和。
 
-### prog3：ISPC 的 gang 与 task
+### prog3：ISPC 的两层并行
 
-- `foreach` 声明独立迭代空间，编译器自动映射到 8 条 SIMD lane；分歧导致加速比只有 5.0x（view1）/ 4.2x（view2）。
-- `launch[N]` 把任务扔进运行时队列，worker 动态领取 → 切得碎可以摊平负载不均。
-- 实测任务数扫描：view2 从 2 任务的 6.44x 升到 40 任务的 7.14x，16 左右进入平台期；最终选择 **16 任务**（需整除 height=800）。
-- 排坑记录：N 不整除 800 时整除截断导致末行漏算，验证失败——任务数必须整除，或自行处理余数。
+- **第一层（核内 SIMD）**：调用 ISPC 函数 = 启动一 gang 程序实例（`programCount`=8，`programIndex`=lane 号）。`foreach` 声明"这些迭代互相独立"，编译器自动映射到 8 条 SIMD lane、自动生成掩码。
+- **第二层（多核 task）**：`launch[N]` 把 N 个任务扔进**运行时任务队列**，worker 线程（≈核数）谁空谁领——动态调度，不是随机也不是焊死。`taskIndex` 区分任务，`programIndex` 区分 lane。
+- 任务粒度权衡：太粗（N≈核数）退化回静态划分（view2 的 2 任务只有 6.44x）；够碎（16~40）摊平负载不均（→7.14x）；过碎则调度开销占比上升。**核数定上限，任务数定接近上限的程度**。
+- 分歧依旧：同批 8 像素迭代数不同 → SIMD 层只拿到 5.0x/4.2x（理论 8x）。view2（边界细节）比 view1 分歧更重。
+- 附坑：prog3 图像是 **1200×800**（不是 prog1 的 1600×1200），任务数必须整除 800 否则末行漏算、验证失败。
+- 32x 的构成：~5-6x（SIMD 打折后）× ~6x（4 核 8 超线程）。本机 2 核实测 view1 8.85x / view2 7.01x（16 任务）。
 
-### prog4：牛顿法求 sqrt
+### prog4：没有计算，就没有并行收益（算术强度）
 
-- 迭代式 `g ← (3g − x·g³)/2` 是方程 `1/g² − x = 0` 的牛顿迭代，全程无除法；`√x = x·g`。
-- 全填 1.0：0 次迭代，内核塌缩为内存带宽密集，加速比只剩 1.84x —— **没有计算就没有并行收益**。
-- 全填 2.999（最大迭代数且完全均匀）：SIMD 5.92x，加任务 9.81x。
+- 迭代式 `g ← (3g − x·g³)/2` = 方程 `1/g² − x = 0` 的牛顿迭代，全程无除法；`√x = x·g`。
+- **全填 1.0**：初始猜测即解，while 循环 0 次 → 内核塌缩为纯内存搬运 → 加速比仅 1.84x（串行和 SIMD 撞同一堵带宽墙）。
+- **全填 2.999**（最大迭代数且完全均匀）：5.92x（SIMD）/ 9.81x（+task）。
+- 构造最差输入：交替填 2.999 与 1.0，每个 gang 都有慢元素拖住 7 条 lane。
+- 教训：**并行加速的前提是有计算可并行**；优化输入分布可以控制分歧程度。
 
-## 自动化测试脚本
+### prog5：带宽墙与 Roofline 模型
 
-prog1/2/3 各目录下有 `run_sweep.sh`，自动完成"改参数 → 重编 → 跑全档位 → 解析输出 → 生成 Markdown 结果表"：
+- saxpy 每元素 2 FLOPs / 16 字节 → 算术强度 ≈ 0.125，典型**内存带宽瓶颈**。
+- 实测：单核 18.9 GB/s 已接近机器带宽上限，加任务后 21.2 GB/s → **多核仅 1.12x**。带宽是所有核共享的资源，加核不加带宽。
+- **Roofline**：`可达性能 = min(峰值算力, 带宽 × 算术强度)`。三要素别混淆：算力和带宽是硬件属性，算术强度是算法属性。
+- `TOTAL_BYTES = 4*N*4` 而不是 3N：写 result 前缓存要先读入该 cache line（write-allocate / RFO）→ 读 X + 读 Y + 读 result + 写 result = 4 股流量。
+- 优化方向只有减字节：non-temporal store（`_mm_stream_ps` 省掉 RFO，4 股→3 股）、数据类型瘦身等。
+- 瓶颈判读表：
 
-```bash
-cd lab1/prog1_mandelbrot_threads && ./run_sweep.sh   # 线程数 2~8 × 两个视图
-cd lab1/prog2_vecintrin && ./run_sweep.sh            # VECTOR_WIDTH 2/4/8/16
-cd lab1/prog3_mandelbrot_ispc && ./run_sweep.sh      # 任务数 2~40 × 两个视图
-```
+| | GFLOPS | GB/s | 加核效果 |
+|---|---|---|---|
+| 计算瓶颈 | 接近峰值 | 远低于上限 | ≈ 线性 |
+| 带宽瓶颈 | 远低于峰值 | 接近上限 | ≈ 1x |
 
-## 其他笔记
+### prog6：性能分析的完整实战
 
-- [git.md](git.md)：git 使用笔记
-- [learning-roadmap.md](learning-roadmap.md)：学习路线
-- 课程原始说明：[lab1/README_zh.md](lab1/README_zh.md)（中文）/ [lab1/README.md](lab1/README.md)（英文）
+- **流程**：`CycleTimer` 插桩 → 测得 assignments 68% / cost 20% / centroids 12% → 对症下药。
+- **循环交换**（k外m内 → m外k内）：800MB 数据每轮 3 趟 → 1 趟；minDist 数组变局部变量；也是按点并行的前提。
+- **按点分块多线程**：每个点独立 → 零同步；各点计算量相同 → 连续分块即可（无需交错）；新增 `startM/endM` 字段，`start/end` 维持质心语义不动。
+- 对照实验：只开线程 1.31x（带宽受限，2 线程只有 1.49x 收益）→ 加循环交换 1.57x。
+- 约束下 2 核天花板 ≈1.6x（Amdahl：49% 串行部分不许并行化）；4 核参考机可过 2.1x。
+- **假收敛教训**：setup 改坏 → assignments 空转 + cost 不写 currCost → 1 轮"收敛"、156ms 假成绩。**快得离谱先查正确性**（质心 diff + 迭代轮数）。
+- 虚拟机计时噪声 ±10~15%：重要数据跑 3 次取最小值。
+
+### 工具技能
+
+- **gdb 命令行调试**：`gdb -tui` / `layout src` 看源码；程序输出冲花界面按 `Ctrl+L` 或 `set inferior-tty /dev/pts/N` 分流；`info threads`/`thread n` 查多线程；硬件 watchpoint 抓越界写。
+- **自动化扫描脚本**：`run_sweep.sh`（prog1/2/3 各自目录）= sed 改参数 → make 重编 → 循环跑 → grep/正则提取 → 生成 Markdown 表格。
+- **git/GitHub**：https  remote 需要 PAT（GitHub 已禁用密码）；SSH key（ed25519）+ `git remote set-url git@github.com:...` 是省心方案；首次连接的主机指纹对照 GitHub 官方文档后输 `yes`。
+
+### 加速的标准流程（Lab 1 全链路复盘）
+
+1. **建基线**：先跑一次拿总时间（kmeans 12.1s），并备好正确性验证手段（verifyResult / 质心 diff）——没有验证手段的加速数字没有意义。
+2. **插桩定位**：`CycleTimer` 分段计时，找占比最大的部分（assignments 68%）。先算 Amdahl：优化占比 10% 的部分，最多只能省 10%。
+3. **判瓶颈层**：看 GFLOPS 与 GB/s 哪个先顶天花板（判读表见 prog5 小节）——计算瓶颈和带宽瓶颈用不同的工具箱，判错了方向白忙。
+4. **先单核效率，后并行**（顺序很重要）：并行只是放大器，单核慢 = 并行后"更均匀地慢"。prog6 里先循环交换（带宽 3 趟→1 趟）再开线程，两步各自计时（1.31x → 1.57x），报告里就是现成的证据链。
+5. **加并行时选独立维度**：像素/数据点/数组元素这类互不依赖的计算就是并行轴；负载均匀用连续分块，不均匀用交错映射（prog1）或动态任务队列（prog3）。
+6. **每步验证 + 复测**：正确性先对（迭代轮数、输出 diff），性能跑 3 次取最小值（虚拟机噪声 ±10~15%）。
+7. **算清天花板再收尾**：Amdahl + 核数 + 带宽，提前知道极限在哪（2 核 1.6x vs 4 核 2.1x），不把硬件限制当成代码问题。
+
+反例警示：156ms 的"假收敛"——跳过第 6 步的加速不是加速。
+
+### 硬件怎么提供并行，代码怎么适配
+
+Lab 1 把 CPU 的三层并行机制全用了一遍：
+
+| 硬件机制 | 物理实体 | Lab 1 的接口 | 适配要点 |
+|---|---|---|---|
+| SIMD 向量单元 | AVX2 = 8 条 32 位 lane，一条指令全场生效 | prog2 intrinsics / prog3 `foreach` | 数据连续成批；分支翻译成掩码（predication）；减少 lane 空转 |
+| 多核 / 超线程 | 每核独立流水线，4C8T = 8 执行上下文 | prog1 `std::thread` / prog3 `launch[N]` task | 找出独立工作切给各核；负载均衡；注意共享带宽 |
+| 存储层次 | cache 行 64B、内存带宽全核共享 | prog5/6 直接撞上 | 提高复用（循环交换/分块 tiling）；减少字节（RFO、融合、类型瘦身） |
+
+由此得出**程序员适配并行硬件的清单**（按优先级）：
+
+1. **找独立性**：哪些计算互不相干——它们就是并行维度（Mandelbrot 的像素、K-Means 的点、saxpy 的数组元素）；
+2. **喂满 lane**：SIMD 要求一批数据走同一条指令流——消除或掩码化分支，分歧就是浪费（prog2/3/4）；
+3. **负载均衡**：静态交错映射（零同步）或动态任务队列（省心，任务数 ≫ 核数即可），别让一个执行单元拖死全队；
+4. **照顾内存**：连续访问、一次加载多次复用、能少写一个字节就少写一个（prog5/6）；
+5. **能不同步就不同步**：独立分块优先于锁和原子操作——prog1 禁同步也能靠映射设计解决；
+6. **粒度匹配**：任务/循环块要 ≫ 调度与创建开销。
+
+一句话：**程序员的工作不是"让代码并行"，而是把问题重构成硬件并行单元喜欢的形状——独立、均匀、连续、计算密集。**
+
+---
+
+## Lab 2
+
+（待完成）
+
+## Lab 3
+
+（待完成）
+
+---
+
+## 附：原始资料与其他笔记
+
+- 课程说明：[lab1/README_zh.md](lab1/README_zh.md)（中文）/ [lab1/README.md](lab1/README.md)（英文）
+- [git.md](git.md) · [learning-roadmap.md](learning-roadmap.md)
