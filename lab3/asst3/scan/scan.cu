@@ -174,7 +174,14 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
     return overallDuration; 
 }
 
-
+__global__ void
+judge_kernel(int* device_input,int* device_output){
+    int t = blockIdx.x * blockDim.x  + threadIdx.x;
+    int i  = t;
+    if(i < N){
+        
+    }
+}
 // find_repeats --
 //
 // Given an array of integers `device_input`, returns an array of all
@@ -194,6 +201,10 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // exclusive_scan function with them. However, your implementation
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
+    int work = (length - 1) / 256;
+    jud
+
+
 
     return 0; 
 }
