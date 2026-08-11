@@ -42,6 +42,27 @@ static inline int nextPow2(int n) {
 // Also, as per the comments in cudaScan(), you can implement an
 // "in-place" scan, since the timing harness makes a copy of input and
 // places it in result
+__global__ void 
+upsweep_kernel(int N, int two_d, int two_dplus1, int *output){
+    int t = blockIdx.x * blockDim.x  + threadIdx.x;
+    int i = t * two_dplus1;
+    if(i < N ){
+        output[i + two_dplus1 -1] += output[i + two_d -1]; 
+    }
+
+}
+
+__global__ void
+downsweep_kernel(int N, int two_d, int two_dplus1,int *output){
+    int t = blockIdx.x * blockDim.x  + threadIdx.x;
+    int i = t * two_dplus1;
+    if(i < N){
+            int t = output[i+two_d-1];
+            output[i+two_d-1] = output[i+two_dplus1-1];
+            output[i+two_dplus1-1] += t;
+    }
+}
+
 void exclusive_scan(int* input, int N, int* result)
 {
 
@@ -53,7 +74,20 @@ void exclusive_scan(int* input, int N, int* result)
     // on the CPU.  Your implementation will need to make multiple calls
     // to CUDA kernel functions (that you must write) to implement the
     // scan.
+    int M = nextPow2(N);
+    for(int two_d = 1; two_d <= M/2; two_d *=2){
+        int two_dplus1 = 2 * two_d;
+        int work = M / two_dplus1;
 
+        upsweep_kernel<<<(work + 255) / 256,256>>>(M,two_d, two_dplus1,result);
+    }
+    setlastzero_kernel<<<1, 1>>>(M, result);
+
+    for (int two_d = M/2; two_d >= 1; two_d /= 2) {
+        int two_dplus1 = 2*two_d;
+        int work = M / two_dplus1;
+        downsweep_kernel<<<(work + 255) / 256,256>>>(M,two_d, two_dplus1,result);
+    }
 
 }
 
