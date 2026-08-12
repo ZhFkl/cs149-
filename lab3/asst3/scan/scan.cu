@@ -63,6 +63,11 @@ downsweep_kernel(int N, int two_d, int two_dplus1,int *output){
     }
 }
 
+__global__ void
+setlastzero_kernel(int N,int* output){
+    output[N -1] = 0;
+}
+
 void exclusive_scan(int* input, int N, int* result)
 {
 
@@ -175,13 +180,25 @@ double cudaScanThrust(int* inarray, int* end, int* resultarray) {
 }
 
 __global__ void
-judge_kernel(int* device_input,int* device_output){
-    int t = blockIdx.x * blockDim.x  + threadIdx.x;
-    int i  = t;
-    if(i < N){
-        
+mark_repeats_kernel(int length, int* input, int* flags){
+    // ji suan ci shi de xian cheng id
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i < length -1){
+        flags[i] = (input[i] == input[i + 1])? 1 : 0;
+    }else if(i < length){
+        flags[i] = 0;
     }
+
 }
+
+
+__global__ void
+scatter_repeats_kernel(int length,int* input ,int* scan , int* output){
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i < length -1 && input[i] == input[i + 1]){
+        output[scan[i]] = i;
+    }
+} 
 // find_repeats --
 //
 // Given an array of integers `device_input`, returns an array of all
@@ -201,12 +218,27 @@ int find_repeats(int* device_input, int length, int* device_output) {
     // exclusive_scan function with them. However, your implementation
     // must ensure that the results of find_repeats are correct given
     // the actual array length.
-    int work = (length - 1) / 256;
-    jud
+    int M = nextPow2(length);
+    int work = (length + THREAD_PER_BLOCK - 1) / THREAD_PER_BLOCK;
+    // shou xian shi jin xing biao ji 
+    int* flags;
+    // fen pei nei cun 
+    cudaMalloc(&flags,M*sizeof(int));
+    cudaMemset(flags,0,M * sizeof(int));
+    // qing kong nei cun 
 
+    // diao yong ci shi de mark_repeats han shu , ran hou jin xing biao ji 
+    mark_repeats_kernel<<<work,THREAD_PER_BLOCK>>>(length,device_input, flags);
+    // biao ji wan chng zhi hou ci shi ji suan qian zhui he 
+    exclusive_scan(flags, length, flags);
+    // ji suan wan cheng qian zhui he  zhi hou diao yong ci shi de result han shu 
+    scatter_repeats_kernel<<<work,THREAD_PER_BLOCK>>>(length,device_input, flags,device_output);
+    // ran hou ba resulte fan hui , bing qie fan hui yi ge count 
+    int count;
+    cudaMemcpy(&count, flags + length -1, sizeof(int), cudaMemcpyDeviceToHost);
 
-
-    return 0; 
+    cudaFree(flags);
+    return count; 
 }
 
 

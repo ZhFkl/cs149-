@@ -39,6 +39,7 @@ struct GlobalConstants {
 // about this type of memory in class, but constant memory is a fast
 // place to put read-only variables).
 __constant__ GlobalConstants cuConstRendererParams;
+constexpr int THREADS_PER_BLOCK =  256;
 
 // read-only lookup tables used to quickly compute noise (needed by
 // advanceAnimation for the snowflake scene)
@@ -633,13 +634,167 @@ CudaRenderer::advanceAnimation() {
     cudaDeviceSynchronize();
 }
 
+__device__ __forceinline__ void
+blockExclusiveScan(int tid,const int* flags,int* scanResult){
+    scanResult[tid] = flags[tid];
+    __syncthreads();
+
+    for(int stride = 1; stride < THREADS_PER_BLOCK; stride *= 2){
+        int index = (tid + 1) * 2 * stride - 1;
+        if(index < THREADS_PER_BLOCK){
+            scanResult[index] += scanResult[index - stride];
+        }
+        __syncthreads();
+    }
+
+    if(tid == 0){
+        scanResult[THREADS_PER_BLOCK - 1] = 0;
+    }
+
+    __syncthreads();
+
+    for(int stride = THREADS_PER_BLOCK /2; stride >= 1; stride /= 2){
+        int index = (tid + 1) * 2 * stride - 1;
+        if(index < THREADS_PER_BLOCK){
+            int leftIndex = index - stride;
+            int temp = scanResult[leftIndex];
+            scanResult[leftIndex] = scanResult[index];
+            scanResult[index] += temp;
+        }
+
+        __syncthreads();
+    }
+}
+
+__device__ __forceinline__ bool
+circleOverlapCurrentTile(int circleIndex, float tileLeft, float tileRight, float tileBottom, float tileTop){
+    int index3 = 3 * circleIndex;
+    float3 position = *reinterpret_cast<float3*>(&cuConstRendererParams.position[index3]);
+    // zhao dao ci shi de yuan xin 
+
+    float radius = cuConstRendererParams.radius[circleIndex];
+    // zhao dao ci shi de ban jing 
+
+
+    // zhao dao ci shi zhe ge tile zhong ju li yuan zui jin de dian 
+    float closestX = fminf(fmaxf(position.x,tileLeft),tileRight);
+    float closestY = fminf(fmaxf(position.y,tileBottom),tileTop);
+
+
+    // puan dan ci shi dian dao yuan xin de ju li shi bu shi xiao yu ban jing 
+    float dx = position.x - closestX;
+    float dy = position.y - closestY;
+
+    return dx*dx + dy * dy <= radius * radius;
+}
+
+__global__  void kernelRenderPixels(){
+    // shou xian 
+    // de dao ci shi de xiang su dian de wei zhi 
+    int pixelX = blockIdx.x * blockDim.x + threadIdx.x;
+    int pixelY = blockIdx.y * blockDim.y + threadIdx.y;
+    // huo de dui ying de tid
+
+
+    int tid = threadIdx.y* blockDim.x + threadIdx.x;
+    int numcircles = cuConstRendererParams.numCircles;
+    int width = cuConstRendererParams.imageWidth;
+    int height = cuConstRendererParams.imageHeight;
+    // huo de dui ying ci shi zhe ge xian cheng dai biao de yi ge xiang su dian de wei zhi
+    
+    
+    bool Validpixel = pixelX < width && pixelY  < height;
+    // pan daun zhe ge xiang su dian shi bu shi valid
+
+    // ji suan bian jie 
+
+    int tileMinPixelX = blockIdx.x * blockDim.x; 
+    int tileMinPixelY = blockIdx.y * blockDim.y;
+
+    int tileMaxPixelX = min(tileMinPixelX + static_cast<int>(blockDim.x),width);
+    int tileMaxPixelY = min(tileMinPixelY + static_cast<int>(blockDim.y),height);
+
+    float tileLeft = static_cast<float>(tileMinPixelX) / width;
+    float tileRight = static_cast<float>(tileMaxPixelX) / width;
+    float tileBottom = static_cast<float>(tileMinPixelY) / height;
+    float tileTop = static_cast<float>(tileMaxPixelY) / height;
+
+    float4 pixelColor;
+    float2 pixelCenter;
+    // if valid ci shi jiu yao na dao zhe ge xiang su dian de rgbhe alpha
+    int pixelIndex = pixelY * width + pixelX;
+    float4* image = reinterpret_cast<float4*>(cuConstRendererParams.imageData);
+    if(Validpixel){
+        // huo de ci shi de yan se can shu 
+        pixelColor = image[pixelIndex];
+        pixelCenter = make_float2(
+            (pixelX + 0.5f) / width,
+            (pixelY + 0.5f) / height
+        );
+    }
+    __shared__ int flags[THREADS_PER_BLOCK];
+    __shared__ int scanResult[THREADS_PER_BLOCK];
+    __shared__ int candidateCircles[THREADS_PER_BLOCK];
+
+
+    for(int batchStart = 0; batchStart < numcircles; batchStart += THREADS_PER_BLOCK ){
+        // shouxian shi huo de ci shi de circleid
+        int circleIndex = batchStart + tid;
+
+        // huo de le circleid zhi hou ci shi yao pan duan zhe ge circle yu wo men de zhe ge tile chong bu chong die 
+        // bing qie biao ji ci shi de flag
+        flags[tid] = circleIndex < numcircles && circleOverlapCurrentTile(circleIndex,tileLeft,tileRight,tileBottom,tileTop);
+        __syncthreads();
+        // biao ji wan le flag zhi hou ci shi yao jin xing yi ge wan zheng de sao miao 
+        blockExclusiveScan(tid,flags,scanResult);
+        //tong bu 
+        __syncthreads();
+        // sao miao wan cheng zhi hou ci shi yao geng xin wo men de bian lian hou xuan ren 
+        if(flags[tid]){
+            candidateCircles[scanResult[tid]] = circleIndex;
+        }
+        __syncthreads();
+        // ci shi bian li suo you de circle ran hou jin xing xuan ran 
+        int last = THREADS_PER_BLOCK - 1;
+        int candidatecount = flags[last] + scanResult[last];
+
+        if(Validpixel){
+            for(int i = 0 ; i < candidatecount ; i++){
+                int candidate = candidateCircles[i];
+                // huo de dui ying de xu yao xuan ran de can shu 
+                int index3 = 3 * candidate;
+                float3 position = *reinterpret_cast<float3*>(&cuConstRendererParams.position[index3]);
+                // xuan ran 
+                shadePixel(candidate, pixelCenter, position, &pixelColor);
+            }
+        }
+
+        __syncthreads();
+    }
+    if(Validpixel)
+        image[pixelIndex] = pixelColor;
+    // yi ge block zhong kai 256 ge xian cheng lai pao suo you de circle pan duan ci shi shi bu shi chong die 
+
+
+
+}
+
 void
 CudaRenderer::render() {
 
     // 256 threads per block is a healthy number
-    dim3 blockDim(256, 1);
-    dim3 gridDim((numCircles + blockDim.x - 1) / blockDim.x);
+    // gei mei ge block fen pei xina cheng de dao dui ying de xian cheng jie gou 
+    // gei yi ge gpu fen pei hao dui ying de blcok kuai 
+    dim3 blockDim(16,16);
+    dim3 gridDim(
+        (image->width + blockDim.x - 1) / blockDim.x,
+        (image->height + blockDim.y - 1) / blockDim.y
+    );
 
-    kernelRenderCircles<<<gridDim, blockDim>>>();
+    // diao yong han shu 
+    kernelRenderPixels<<<gridDim,blockDim>>>();
+    // deng dai diao yong de han shu tong bu 
     cudaDeviceSynchronize();
+
+
 }
