@@ -795,6 +795,4 @@ CudaRenderer::render() {
     kernelRenderPixels<<<gridDim,blockDim>>>();
     // deng dai diao yong de han shu tong bu 
     cudaDeviceSynchronize();
-
-
 }
