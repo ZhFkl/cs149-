@@ -51,7 +51,7 @@ More details on the four distinct compute engines that exist in a NeuronCore can
 In Assignment 3, one of the key concepts was learning about the GPU memory hierarchy presented by CUDA, where there was main host memory, GPU device global memory, per-thread block shared memory, and private per-CUDA-thread memory.  On Trainium, the memory hierarchy consists of four levels: **host memory (DRAM)**, **device memory (HBM)**, and two fast on-chip memory types, **SBUF (State Buffer)** and **PSUM (Partial Sum Buffer)**. In this assignment, we'll be writing kernels that only target device/on-chip memory, so we can ignore DRAM (which is external to the Trainium device) and focus on HBM, SBUF, and PSUM.
 
 <p align="center">
-  <img src="/handout/memory_hierarchy.png" width=80% height=80%>
+  <img src="handout/memory_hierarchy.png" width=80% height=80%>
 </p>
 
 * __HBM__ is high-bandwidth memory located on the Trainium device. HBM serves as the device's primary memory, offering large storage (96 GiB). Most data types created outside kernels (e.g. NumPy arrays) are allocated in HBM by default.
@@ -59,7 +59,7 @@ In Assignment 3, one of the key concepts was learning about the GPU memory hiera
 * __PSUM__ is a small, specialized memory bank (2 MiB) dedicated to holding matrix multiplication results produced by the tensor engine.
 
 <p align="center">
-  <img src="/handout/neuron_core.png" width=40% height=40%>
+  <img src="handout/neuron_core.png" width=40% height=40%>
 </p>
 
 Recall that in a system that features a traditional data cache, decisions about what data from off-chip memories is replicated and stored in on-chip storage are made by the cache (based on cache organization and eviction policies). Software loads data at a given memory address, and the hardware is responsible for fetching that data from memory and managing what data is stored in the cache for efficient future access. In other words, from the perspective of software correctness, the cache does not exist--it is a hardware implementation detail. 
@@ -128,7 +128,7 @@ In the code above...
 - `nisa.dma_copy` moves the relevant data between HBM and SBUF (conceptually similar to `cudaMemcpyAsync` on NVIDIA GPUs).
 
 <p align="center">
-  <img src="/handout/sbuf_layout.png" width=60% height=60%>
+  <img src="handout/sbuf_layout.png" width=60% height=60%>
 </p>
 
 **When looking at the code above, notice that NKI operations operate on tensors, not scalar values.** Specifically, the on-chip memories, SBUF and PSUM, store data that is arranged as 2D memory arrays. The first dimension of the 2D array is called the "partition dimension" `P`. The second dimension is referred to as the "free dimension" `F`.  NeuronCores are able to load and process data along the partition dimension in parallel, *but the architecture also places a restriction that the size of the partition dimension is 128 or smaller.* 
@@ -207,8 +207,8 @@ Although the first dimension (partition dimension) of a SBUF tensor can be no gr
 In order to improve DMA transfer overhead, we will need to reshape our vectors so they are two-dimensional tiles, rather than linearized arrays. In Assignment 3, we worked with CUDA thread blocks partitioned across an entire image, and in order to map CUDA threads to image pixels we flattened our grid by calculating a thread’s global linear index. You can think about the reshaping process for the NeuronCore as the inverse: the goal is to turn a single-dimension vector into a dense 2D matrix. NumPy comes with a built-in [reshape function](https://numpy.org/doc/stable/reference/generated/numpy.reshape.html) allowing you to reshape arrays into the shape of your choosing. 
 
 <p align="center">
-  <img src="/handout/non_reshaped_DMA.png" width=48% height=48%>
-  <img src="/handout/reshaped_DMA.png" width=48% height=48%>
+  <img src="handout/non_reshaped_DMA.png" width=48% height=48%>
+  <img src="handout/reshaped_DMA.png" width=48% height=48%>
 </p>
 
 
@@ -337,7 +337,7 @@ For this task, you will need to use the profiling tool for NeuronDevices: `neuro
    
    After these steps, the profiler graph should look like this:
 
-   ![Profiler GUI Example](/handout/profiler_gui.png)
+   ![Profiler GUI Example](handout/profiler_gui.png)
    
    You can also hover over various events in the graph to see more info. Try hovering over events in the following categories:
    
@@ -359,7 +359,7 @@ For this task, you will need to use the profiling tool for NeuronDevices: `neuro
 Before you begin, we will demonstrate how to perform matrix operations on a NeuronCore. As discussed earlier, a NeuronCore is equipped with various compute engines, each optimized for specific types of arithmetic operations. The Tensor Engine on Trainium is specifically designed to accelerate these matrix operations, such as matrix multiplication and matrix transpose. 
 
 <p align="center">
-  <img src="/handout/tensor_engine.png" width=60% height=60%>
+  <img src="handout/tensor_engine.png" width=60% height=60%>
 </p>
 
 The above image depicts the architecture of the Tensor Engine. The Tensor Engine is built around a 128x128 [systolic processing array](https://gfxcourses.stanford.edu/cs149/fall25/lecture/proghardware/slide_10) which streams matrix data input from SBUF (on-chip storage) and writes the output to PSUM (also on-chip storage). Like SBUF, PSUM is fast on-chip memory, however it is much smaller than SBUF (2MiB vs 28 MiB) and serves a dedicated purpose of storing matrix multiplication results computed by the Tensor Engine. The Tensor Engine is able to read-add-write to every address in PSUM. Therefore, PSUM is useful when executing large matrix multiplications in a tiled manner, where the results of each matrix multiply are accumulated into the same output tile.
@@ -492,13 +492,13 @@ In summary, this tiled implementation handles large matrix dimensions by breakin
 Let’s now turn our focus to the convolution layer. Recall the [convolution operation](https://gfxcourses.stanford.edu/cs149/fall25/lecture/dnninference/slide_26) discussed in class. It involves sliding a filter across an __input feature map__, where at each position the filter interacts with the overlapping input region. In each overlapping region, element-wise multiplications are performed between the filter weights and the input region region values. The results of these element-wise multiplications are then added together, producing a single value for the corresponding position in the output feature map. This process captures local spatial patterns and relationships among neighboring features.
 
 <p align="center">
-  <img src="/handout/convolution.png" width=55% height=55%>
+  <img src="handout/convolution.png" width=55% height=55%>
 </p>
 
 The input feature map often consists of multiple channels. For example, an image usually contains three RGB channels (red, green, and blue). In this case, instead of only computing a weighted sum over the 2D spatial region, the convolution computes the weighted sum of both the 2D spatial region and channel depth. The image below depicts an example of a convolution layer being performed on a 32x32 input image with three RGB channels. In the image, a 5x5x3 filter is applied on the 32x32x3 image to produce a 28x28x1 output feature map.
 
 <p align="center">
-  <img src="/handout/cs231n_convolution.png" width=55% height=55%>
+  <img src="handout/cs231n_convolution.png" width=55% height=55%>
   <br>
   <em>Source: CS231N https://cs231n.stanford.edu/slides/2025/lecture_5.pdf </em>
 </p>
@@ -508,7 +508,7 @@ __As seen in the image, each filter produces a single channel of output.__ To ge
 The input and output of the convolution operator can be summarized as follows (ignoring bias for now):
 
 <p align="left">
-  <img src="/handout/conv2d_summary.png" width=50% height=50%>
+  <img src="handout/conv2d_summary.png" width=50% height=50%>
 </p>
 
 Additionally, a [convolution layer](https://pytorch.org/docs/stable/generated/torch.nn.functional.conv2d.html) can take in additional hyper-parameters such as padding and stride in addition to an input feature map, filter weights, and scalar bias. However, we have *simplified the constraints of your convolution* to make implementation easier for you. You need **only to support a stride of 1**, and you do **not have to worry about padding** as we will pad the input feature map for you before it is passed into your kernel.
@@ -520,13 +520,13 @@ Now, our objective is to map the convolution operator onto the high-performance 
 **Conv2D:**
 
 <p align="center">
-  <img src="/handout/conv2d_formula.png" width=65% height=65%>
+  <img src="handout/conv2d_formula.png" width=65% height=65%>
 </p>
 
 **Matrix Multiplication:**
 
 <p align="center">
-  <img src="/handout/matmul_formula.png" width=25% height=25%>
+  <img src="handout/matmul_formula.png" width=25% height=25%>
 </p>
 
 In class we discussed one way to convert convolution with many filters into a single large matrix multiplication.  We'll do the same thing here, but take a different approach that yields an efficient implementation on Trainium.  In this approach the convolution operation is formulated as a series of independent matrix multiplications. A visual illustration of this formulation is shown below.
@@ -535,7 +535,7 @@ In class we discussed one way to convert convolution with many filters into a si
 > **This is a different conv -> matmul reduction than the one described in lecture that creates a separate row for every spatial patch.**
 
 <p align="center">
-  <img src="/handout/conv2d_matmul_diagram.png" width=100% height=100%>
+  <img src="handout/conv2d_matmul_diagram.png" width=100% height=100%>
 </p>
 
 In this approach, the height and width dimensions of the input feature map are flattened into a single dimension, reshaping the input to `(Height × Width) × Input Channels​`. This reshaped input is then multiplied by each position of the filters, where `i` and `j` respectively range from `0` to `Filter Height - 1` and from `0` to `Filter Width - 1`. Each filter slice has a shape of `Input Channels × Output Channels`, and the resulting matrix multiplication contracts along the `Input Channels` dimension. To align the input with each filter slice, the input must be shifted by an offset corresponding to the filter’s current position `(i, j)`. The results of these matrix multiplications are accumulated to produce the output tensor.
@@ -568,7 +568,7 @@ Max pooling layers are commonly used in CNNs between successive convolutional la
 A max pooling layer operates similarly to a convolution layer in that it slides a filter spatially over an input feature map. However, instead of computing a weighted sum for each overlapping region, the max pooling layer selects the maximum value from each region and stores it in the output feature map. This operation is applied independently to each channel of the feature map, thus the number of channels remains unchanged. For instance, consider a 4x4 input image with three RGB channels passing through a max pooling layer with a 2x2 filter. The resulting output is a 2x2 image with three RGB channels, showing that the spatial dimensions are reduced by a factor of 2 while the number of channels remains the same.
 
 <p align="center">
-  <img src="/handout/maxpool.png" width=37% height=37%>
+  <img src="handout/maxpool.png" width=37% height=37%>
 </p>
 
 As shown above, a [max pool layer](https://pytorch.org/docs/stable/generated/torch.nn.functional.max_pool2d.html#torch.nn.functional.max_pool2d) typically has separate stride and filter size hyperparameters. Similar to the convolution layer, we have simplified the constraints for the max pooling layer you are required to implement. Instead of defining both parameters, your kernel will use a single parameter, `pool_size`, which corresponds to both the filter size and the stride. The `pool_size` can only be set to either 1 or 2. When `pool_size` is 2, the max pooling operation behaves as shown in the image above. When `pool_size` is 1, the max pooling layer functions as a no-op, producing an output identical to the input. While a `pool_size` of 1 might seem pointless, it actually offers added flexibility for your fused layer, as you will soon see. 
@@ -577,7 +577,7 @@ As shown above, a [max pool layer](https://pytorch.org/docs/stable/generated/tor
 You will implement an NKI kernel that combines the Convolution and Max Pool layers into a single, fused operation. Below, we will outline the detailed specifications and requirements for your fused layer.
 
 <p align="center">
-  <img src="/handout/fused_kernel.png" width=95% height=95%>
+  <img src="handout/fused_kernel.png" width=95% height=95%>
 </p>
 
 The diagram above illustrates the calculations your fused kernel would perform on a 6x6 input with a single input channel. The fused kernel performs a standard convolution with one filter and stride of 1. The fused kernel then performs a max pool on the convolution result using a 2x2 pooling filter.

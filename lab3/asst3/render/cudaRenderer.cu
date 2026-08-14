@@ -774,9 +774,6 @@ __global__  void kernelRenderPixels(){
     if(Validpixel)
         image[pixelIndex] = pixelColor;
     // yi ge block zhong kai 256 ge xian cheng lai pao suo you de circle pan duan ci shi shi bu shi chong die 
-
-
-
 }
 
 void

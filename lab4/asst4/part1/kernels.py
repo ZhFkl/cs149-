@@ -148,5 +148,34 @@ def matrix_transpose(a_tensor):
     assert M % tile_dim == N % tile_dim == 0, "Matrix dimensions not divisible by tile dimension!"
 
     # TODO: Your implementation here. The only compute instruction you should use is `nisa.nc_transpose`.
-
+    for i in nl.affine_range(M // tile_dim):
+        for j in nl.affine_range(N // tile_dim):
+            input_tile =   nl.ndarray(
+                (tile_dim,tile_dim),
+                dtype = a_tensor.dtype,
+                buffer = nl.sbuf 
+            )
+            # gei inpu_tile fen pei nei cun 
+            # jia zai dao ci shi de sbuf
+            nisa.dma_copy(
+                src = a_tensor[
+                    i* tile_dim : (i + 1) * tile_dim,
+                    j * tile_dim : (j + 1) * tile_dim
+                ],
+                dst = input_tile
+            )
+            # diao yogn transpose 
+            transposed_psum = nisa.nc_transpose(input_tile)
+            transposed_sbuf = nisa.tensor_copt(
+                transposed_psum,
+                dtype = a_type.dtype
+            )
+            # ba ji suan hao de shu chu dao output zhong 
+            nisa.dma_copy(
+                src = transposed_sbuf,
+                dst = out[
+                    j * tile_dim : (j + 1) * tile_dim,
+                    i * tile_dim : (i + 1) * tile_dim
+                ]
+            )
     return out
